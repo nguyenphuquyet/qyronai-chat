@@ -1,0 +1,252 @@
+@import "tailwindcss";
+
+/* ============================================================
+   BỘ MẶT: Soft (P13) — sidebar trắng, nội dung nền xám,
+   card nổi nhẹ, font Be Vietnam Pro. Sắc: Neutral.
+   Đổi thương hiệu: --primary (2 chỗ: khối sáng + hover/light)
+   và --app-font (1 dòng).
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  --app-font: var(--font-be-vietnam), ui-sans-serif, system-ui, sans-serif;
+
+  /* Màu nhấn — Indigo, ngành "khác / chưa rõ" theo brand-tokens */
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-foreground: #ffffff;
+  --primary-light: rgb(79 70 229 / 0.08);
+
+  --background: #f4f4f6;
+  --surface: #ffffff;
+  --foreground: #2c2c2c;
+  --muted: #707070;
+  --border: #f7f7f8;
+  --border-strong: #eaeaea;
+
+  --surface-overlay: #ffffff;
+  --elevation-popover:
+    0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --elevation-modal:
+    0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --elevation-card:
+    0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.06);
+
+  --item-hover: #f4f4f6;
+  --secondary: #e7e8ec;
+  --secondary-hover: #dbdce2;
+  --background-hover: #e7e7ea;
+  --surface-hover: #f8f8fa;
+
+  --button-hover-surface: #f1f1f3;
+  --button-hover-page: #e4e4e7;
+  --button-hover: var(--button-hover-page);
+
+  --ring-focus: rgb(79 70 229 / 0.12);
+  --border-focus: var(--primary);
+
+  --danger: #c70036;
+  --danger-bg: rgb(255 32 86 / 0.1);
+  --danger-bg-hover: rgb(255 32 86 / 0.15);
+
+  --error: #fb2c36;
+  --error-ring: rgb(251 44 54 / 0.1);
+  --error-text: #e7000b;
+  --error-bg: #fef2f2;
+  --error-border: #ffc9c9;
+  --error-strong: #c10007;
+
+  --success-bg: #ecfdf5;
+  --success: #007a55;
+  --warning-bg: #fffbeb;
+  --warning: #bb4d00;
+  --neutral-bg: #f4f4f5;
+  --neutral: #52525c;
+
+  --radius: 0.75rem;
+}
+
+@theme inline {
+  --font-sans: var(--app-font);
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, monospace;
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-light: var(--primary-light);
+
+  --color-background: var(--background);
+  --color-background-hover: var(--background-hover);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-item-hover: var(--item-hover);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-button-hover: var(--button-hover);
+
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-error: var(--error);
+  --color-error-text: var(--error-text);
+  --color-error-bg: var(--error-bg);
+  --color-error-border: var(--error-border);
+  --color-error-strong: var(--error-strong);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-neutral-bg: var(--neutral-bg);
+
+  --border-color-focus: var(--border-focus);
+  --ring-color-focus: var(--ring-focus);
+
+  --shadow-card: var(--elevation-card);
+  --shadow-popover: var(--elevation-popover);
+  --shadow-modal: var(--elevation-modal);
+}
+
+/* Nền rê của nút viền theo nền phía sau */
+.bg-surface *,
+.bg-surface-overlay * {
+  --button-hover: var(--button-hover-surface);
+}
+.bg-surface .bg-background *,
+[class~="hover:bg-item-hover"]:hover * {
+  --button-hover: var(--button-hover-page);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+::selection {
+  background: rgb(79 70 229 / 0.16);
+}
+
+/* ===== THANH CUỘN TỰ ẨN (I18) ===== */
+* {
+  --scrollbar-thumb: transparent;
+}
+*:hover {
+  --scrollbar-thumb: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+.is-scrolling {
+  --scrollbar-thumb: color-mix(in srgb, var(--foreground) 28%, transparent);
+}
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 40%, transparent);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  *:hover {
+    scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent)
+      transparent;
+  }
+  .is-scrolling {
+    scrollbar-color: color-mix(in srgb, var(--foreground) 28%, transparent)
+      transparent;
+  }
+}
+
+.scrollbar-clean {
+  scrollbar-width: none;
+}
+.scrollbar-clean::-webkit-scrollbar {
+  display: none;
+}
+
+/* ===== LỚP NỔI ===== */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.menu-in {
+  animation: menu-in 140ms ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fade-in 160ms ease-out;
+}
+
+/* Dấu "đang chạy" ba chấm cho trạng thái chờ */
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+.typing-dot {
+  animation: typing-dot 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

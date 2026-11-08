@@ -1,0 +1,153 @@
+// Prisma schema cho Qyron AI — MySQL.
+// Chạy: npx prisma migrate dev --name init
+// Sau đó: npm run db:seed
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Provider {
+  id        String   @id
+  name      String
+  baseUrl   String   @db.VarChar(500)
+  apiKey    String   @db.VarChar(500)
+  enabled   Boolean  @default(true)
+  note      String?  @db.Text
+  builtin   Boolean  @default(false)
+  sortOrder Int      @default(0)
+  models    Model[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+model Model {
+  id            String   @id
+  name          String
+  description   String   @db.Text
+  providerId    String
+  provider      Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  contextWindow String?  @db.VarChar(32)
+  badge         String?  @db.VarChar(32)
+  apiModel      String?  @db.VarChar(200)
+  protocol      String   @default("openai") @db.VarChar(20)
+  icon          String?  @db.VarChar(40)
+  systemPrompt  String?  @db.Text
+  reasoning     Boolean  @default(false)
+  enabled       Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([providerId])
+  @@index([sortOrder])
+}
+
+model Skill {
+  id           String   @id
+  name         String
+  description  String   @db.Text
+  instructions String   @db.Text
+  category     String   @db.VarChar(80)
+  icon         String   @db.VarChar(40)
+  enabled      Boolean  @default(true)
+  uses         Int      @default(0)
+  builtin      Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+/// Cấu hình dùng chung cho toàn ứng dụng (ví dụ chỉ dẫn chung cho mọi mô hình).
+model Setting {
+  key       String   @id @db.VarChar(80)
+  value     String   @db.LongText
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id            String         @id
+  name          String         @db.VarChar(120)
+  email         String         @unique @db.VarChar(200)
+  passwordHash  String         @db.VarChar(255)
+  /// "admin" hoặc "user".
+  role          String         @default("user") @db.VarChar(20)
+  plan          String         @default("Qyron") @db.VarChar(40)
+  sessions      Session[]
+  settings      UserSetting[]
+  conversations Conversation[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([role])
+}
+
+/// Cấu hình riêng của từng tài khoản: mô hình đang chọn, mức suy luận,
+/// hội thoại đang mở, danh sách đã lưu…
+model UserSetting {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String   @db.VarChar(80)
+  value     String   @db.LongText
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, key])
+}
+
+model Session {
+  /// SHA-256 của token trong cookie; token gốc không lưu trong database.
+  id        String   @id @db.VarChar(64)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Conversation {
+  id           String    @id
+  title        String    @db.VarChar(300)
+  groupName    String    @db.VarChar(40)
+  updatedLabel String?   @db.VarChar(40)
+  pinned       Boolean   @default(false)
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  messages     Message[]
+
+  @@index([updatedAt])
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String       @id
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String       @db.VarChar(20)
+  text           String?      @db.LongText
+  attachments    String?      @db.LongText
+  blocks         String?      @db.LongText
+  steps          String?      @db.LongText
+  state          String?      @db.VarChar(20)
+  error          String?      @db.LongText
+  suggestions    String?      @db.LongText
+  skills         String?      @db.LongText
+  reasoning      String?      @db.LongText
+  sources        String?      @db.LongText
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, sortOrder])
+}
+
