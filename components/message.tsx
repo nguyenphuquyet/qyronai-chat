@@ -5,23 +5,20 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
-  FileText,
-  ImageIcon,
   LoaderCircle,
   RotateCw,
   Sparkles,
 } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BlockView } from "@/components/message-blocks";
+import {
+  AttachmentLightbox,
+  AttachmentPreviewCard,
+} from "@/components/attachment-preview";
 import { markdownToBlocks } from "@/lib/markdown";
-import type { Message, Step, StepStatus } from "@/lib/types";
+import type { Attachment, Message, Step, StepStatus } from "@/lib/types";
 import { cn, plainTextOfMessage } from "@/lib/utils";
-
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { useAutohideScrollbar } from "@/components/ui/scroll";
 
 function StepIcon({ status }: { status: StepStatus }) {
   if (status === "running") {
@@ -58,7 +55,28 @@ function Process({
   thinking: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const reasoningRef = useAutohideScrollbar<HTMLDivElement>();
+  const followRef = useRef(true);
   const running = steps.find((step) => step.status === "running");
+
+  // Đang suy nghĩ thì bám đáy để chữ mới nhất luôn hiện; nếu người dùng
+  // chủ động cuộn lên đọc lại thì tạm dừng, kéo về cuối sẽ bám tiếp.
+  useLayoutEffect(() => {
+    if (!thinking || !open || !followRef.current) return;
+    const el = reasoningRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [reasoning, thinking, open, reasoningRef]);
+
+  const toggle = () => {
+    if (!open) followRef.current = true;
+    setOpen((value) => !value);
+  };
+
+  const handleReasoningScroll = () => {
+    const el = reasoningRef.current;
+    if (!el) return;
+    followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+  };
 
   const label = thinking
     ? (running?.label ?? (reasoning ? "Đang suy nghĩ" : "Đang xử lý"))
@@ -71,7 +89,7 @@ function Process({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md text-sm text-muted outline-hidden transition-colors hover:text-foreground"
       >
         <ChevronRight
@@ -119,7 +137,11 @@ function Process({
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
                 Suy nghĩ của mô hình
               </p>
-              <div className="max-h-72 overflow-y-auto whitespace-pre-wrap text-sm text-pretty text-muted [overflow-wrap:anywhere]">
+              <div
+                ref={reasoningRef}
+                onScroll={handleReasoningScroll}
+                className="max-h-72 overflow-y-auto whitespace-pre-wrap text-sm text-pretty text-muted [overflow-wrap:anywhere]"
+              >
                 {reasoning}
               </div>
             </div>
@@ -175,6 +197,7 @@ export default function MessageItem({
   onSuggestion,
 }: MessageItemProps) {
   const [copied, setCopied] = useState(false);
+  const [viewing, setViewing] = useState<Attachment | null>(null);
   const state = message.state ?? "done";
   const isThinking = state === "thinking";
   const isStreaming = state === "streaming";
@@ -194,22 +217,11 @@ export default function MessageItem({
         {message.attachments?.length ? (
           <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5 sm:max-w-[75%]">
             {message.attachments.map((file) => (
-              <span
+              <AttachmentPreviewCard
                 key={`${file.name}-${file.size}`}
-                className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-border-strong bg-surface px-2.5 py-1.5 text-xs text-foreground shadow-card"
-              >
-                {file.kind === "image" ? (
-                  <ImageIcon className="size-3.5 shrink-0 text-muted" aria-hidden />
-                ) : (
-                  <FileText className="size-3.5 shrink-0 text-muted" aria-hidden />
-                )}
-                <span className="max-w-[200px] truncate font-medium">
-                  {file.name}
-                </span>
-                <span className="shrink-0 tabular-nums text-muted">
-                  {formatFileSize(file.size)}
-                </span>
-              </span>
+                attachment={file}
+                onOpen={() => setViewing(file)}
+              />
             ))}
           </div>
         ) : null}
@@ -217,6 +229,12 @@ export default function MessageItem({
           <p className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-3xl bg-surface px-4 py-2.5 text-base text-pretty text-foreground shadow-card ring-1 ring-black/3 [overflow-wrap:anywhere] sm:max-w-[75%]">
             {message.text}
           </p>
+        ) : null}
+        {viewing ? (
+          <AttachmentLightbox
+            attachment={viewing}
+            onClose={() => setViewing(null)}
+          />
         ) : null}
       </div>
     );

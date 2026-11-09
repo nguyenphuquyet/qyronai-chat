@@ -45,6 +45,7 @@ function toAppUser(row: {
   email: string;
   role: string;
   plan: string;
+  avatar?: string | null;
 }): AppUser {
   return {
     id: row.id,
@@ -52,6 +53,7 @@ function toAppUser(row: {
     email: row.email,
     role: (row.role === "admin" ? "admin" : "user") satisfies UserRole,
     plan: row.plan,
+    avatar: row.avatar ?? undefined,
   };
 }
 

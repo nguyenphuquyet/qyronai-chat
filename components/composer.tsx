@@ -5,8 +5,6 @@ import {
   ArrowUp,
   Brain,
   ChevronDown,
-  FileText,
-  ImageIcon,
   Loader2,
   Paperclip,
   Settings2,
@@ -19,6 +17,10 @@ import Menu, { MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
 import Switch from "@/components/ui/switch";
 import ModelIcon from "@/components/model-icon";
 import SkillIcon from "@/components/skill-icon";
+import {
+  AttachmentLightbox,
+  AttachmentPreviewCard,
+} from "@/components/attachment-preview";
 import type {
   Attachment,
   ModelOption,
@@ -38,12 +40,6 @@ interface DraftAttachment {
   status: "loading" | "ready" | "error";
   attachment?: Attachment;
   error?: string;
-}
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Thu nhỏ ảnh trong trình duyệt để gửi và lưu nhẹ hơn. */
@@ -118,12 +114,15 @@ interface ComposerProps {
   models: ModelOption[];
   providers: Provider[];
   modelId: string;
+  defaultModelId?: string;
   onModelChange: (id: string) => void;
   reasoningSupported: boolean;
   reasoningEnabled: boolean;
   reasoningLevel: string;
   onToggleReasoning: () => void;
   onReasoningLevelChange: (level: string) => void;
+  /** Enter gửi ngay; tắt thì Enter xuống dòng và Ctrl/Cmd+Enter để gửi. */
+  enterToSend?: boolean;
   disabled?: boolean;
 }
 
@@ -140,12 +139,14 @@ export default function Composer({
   models,
   providers,
   modelId,
+  defaultModelId,
   onModelChange,
   reasoningSupported,
   reasoningEnabled,
   reasoningLevel,
   onToggleReasoning,
   onReasoningLevelChange,
+  enterToSend = true,
   disabled,
 }: ComposerProps) {
   const reasoningLevels = ["Thấp", "Vừa", "Cao"];
@@ -163,6 +164,7 @@ export default function Composer({
   const fileRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<DraftAttachment[]>([]);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<Attachment | null>(null);
   const selectedSkills = skills.filter(
     (skill) => skill.enabled && selectedSkillIds.includes(skill.id),
   );
@@ -275,48 +277,53 @@ export default function Composer({
           <div className="space-y-1 px-1 pb-1.5 pt-0.5">
             {files.length > 0 ? (
               <div className="flex flex-wrap gap-2">
-                {files.map((file) => (
-                  <span
-                    key={file.id}
-                    title={file.error}
-                    className={cn(
-                      "inline-flex max-w-full items-center gap-1.5 rounded-lg border py-1 pl-2 pr-1 text-xs",
-                      file.status === "error"
-                        ? "border-red-200 bg-red-50 text-red-700"
-                        : "border-border-strong bg-background text-foreground",
-                    )}
-                  >
-                    {file.status === "loading" ? (
-                      <Loader2 className="size-3.5 shrink-0 animate-spin text-muted" aria-hidden />
-                    ) : file.status === "error" ? (
-                      <AlertCircle className="size-3.5 shrink-0" aria-hidden />
-                    ) : file.attachment?.kind === "image" ? (
-                      <ImageIcon className="size-3.5 shrink-0 text-muted" aria-hidden />
-                    ) : (
-                      <FileText className="size-3.5 shrink-0 text-muted" aria-hidden />
-                    )}
-                    <span className="max-w-[180px] truncate">{file.name}</span>
-                    <span className="shrink-0 tabular-nums opacity-60">
-                      {file.status === "loading"
-                        ? "Đang đọc…"
-                        : file.status === "error"
-                          ? "Lỗi"
-                          : formatSize(file.size)}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Bỏ tệp ${file.name}`}
-                      onClick={() =>
+                {files.map((file) =>
+                  file.status === "ready" && file.attachment ? (
+                    <AttachmentPreviewCard
+                      key={file.id}
+                      attachment={file.attachment}
+                      onOpen={() => setViewing(file.attachment ?? null)}
+                      onRemove={() =>
                         setFiles((current) =>
                           current.filter((item) => item.id !== file.id),
                         )
                       }
-                      className="grid size-5 cursor-pointer place-items-center rounded-md text-muted outline-hidden transition-colors hover:bg-foreground/8 hover:text-foreground"
+                    />
+                  ) : (
+                    <span
+                      key={file.id}
+                      title={file.error}
+                      className={cn(
+                        "inline-flex max-w-full items-center gap-1.5 rounded-lg border py-1 pl-2 pr-1 text-xs",
+                        file.status === "error"
+                          ? "border-red-200 bg-red-50 text-red-700"
+                          : "border-border-strong bg-background text-foreground",
+                      )}
                     >
-                      <X className="size-3" aria-hidden />
-                    </button>
-                  </span>
-                ))}
+                      {file.status === "loading" ? (
+                        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted" aria-hidden />
+                      ) : (
+                        <AlertCircle className="size-3.5 shrink-0" aria-hidden />
+                      )}
+                      <span className="max-w-[180px] truncate">{file.name}</span>
+                      <span className="shrink-0 opacity-60">
+                        {file.status === "loading" ? "Đang đọc…" : "Lỗi"}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Bỏ tệp ${file.name}`}
+                        onClick={() =>
+                          setFiles((current) =>
+                            current.filter((item) => item.id !== file.id),
+                          )
+                        }
+                        className="grid size-5 cursor-pointer place-items-center rounded-md text-muted outline-hidden transition-colors hover:bg-foreground/8 hover:text-foreground"
+                      >
+                        <X className="size-3" aria-hidden />
+                      </button>
+                    </span>
+                  ),
+                )}
               </div>
             ) : null}
             {fileNotice ? (
@@ -346,11 +353,13 @@ export default function Composer({
           placeholder="Hỏi Qyron bất cứ điều gì…"
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
-            if (
+            const wantsSend =
               event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
+              !event.nativeEvent.isComposing &&
+              (enterToSend
+                ? !event.shiftKey
+                : event.ctrlKey || event.metaKey);
+            if (wantsSend) {
               event.preventDefault();
               submit();
             }
@@ -506,7 +515,12 @@ export default function Composer({
                           }}
                         >
                           {model.name}
-                          {model.badge ? (
+                          {model.id === defaultModelId ? (
+                            <span className="ml-2 rounded-md bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              Mặc định
+                            </span>
+                          ) : null}
+                          {model.badge && model.badge !== "Mặc định" ? (
                             <span className="ml-2 rounded-md bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
                               {model.badge}
                             </span>
@@ -637,6 +651,13 @@ export default function Composer({
           Enter để gửi · Shift + Enter xuống dòng
         </p>
       </div>
+
+      {viewing ? (
+        <AttachmentLightbox
+          attachment={viewing}
+          onClose={() => setViewing(null)}
+        />
+      ) : null}
     </div>
   );
 }

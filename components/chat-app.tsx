@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import AdminView from "@/components/admin-view";
+import { SettingsDialog } from "@/components/account-dialogs";
 import ChatHeader from "@/components/chat-header";
 import Composer from "@/components/composer";
 import MessageItem from "@/components/message";
@@ -39,7 +40,7 @@ import type {
 import { useStoredState } from "@/lib/use-stored-state";
 import { useConfigSync } from "@/lib/use-config-sync";
 import { useConversationSync } from "@/lib/use-conversation-sync";
-import { usePreferenceSync } from "@/lib/use-preference-sync";
+import { usePreferenceSync, DEFAULT_UI, type UiSetting } from "@/lib/use-preference-sync";
 import { cn, truncate, uid } from "@/lib/utils";
 
 interface ChatRequest {
@@ -236,15 +237,29 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     "qyron:v5:globalPrompt",
     "",
   );
+  const [defaultModelId, setDefaultModelId] = useStoredState<string>(
+    "qyron:v5:defaultModel",
+    "",
+  );
+  const [profile, setProfile] = useState<AppUser>(user);
+  const [ui, setUi, uiReady] = useStoredState<UiSetting>(
+    "qyron:v5:ui",
+    DEFAULT_UI,
+  );
+  const [accountDialog, setAccountDialog] = useState<
+    "profile" | "settings" | null
+  >(null);
   useConfigSync({
     skills,
     providers,
     models,
     globalPrompt,
+    defaultModelId,
     setSkills,
     setProviders,
     setModels,
     setGlobalPrompt,
+    setDefaultModelId,
     canManage: isAdmin,
   });
   useConversationSync({
@@ -265,13 +280,30 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     reasoning,
     savedIds,
     activeId,
+    ui,
     setModelId,
     setReasoning,
     setSavedIds,
     setActiveId,
+    setUi,
     ready:
-      modelIdReady && activeIdReady && reasoningReady && savedIdsReady,
+      modelIdReady && activeIdReady && reasoningReady && savedIdsReady && uiReady,
   });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark =
+        ui.theme === "dark" || (ui.theme === "system" && media.matches);
+      root.dataset.theme = dark ? "dark" : "light";
+      root.style.fontSize =
+        ui.fontSize === "small" ? "14px" : ui.fontSize === "large" ? "18px" : "16px";
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [ui.theme, ui.fontSize]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -326,6 +358,10 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     availableModels.find((model) => model.id === modelId) ??
     availableModels[0] ??
     null;
+  const effectiveDefaultModelId =
+    defaultModelId ||
+    models.find((model) => model.badge === "Mặc định")?.id ||
+    "";
   const saved = activeId ? savedIds.includes(activeId) : false;
   const isEmpty = messages.length === 0;
 
@@ -1176,6 +1212,15 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     [setModels],
   );
 
+  const handleSetDefaultModel = useCallback(
+    (id: string) => {
+      setDefaultModelId(id);
+      const name = models.find((model) => model.id === id)?.name ?? "mô hình";
+      notify(`Đã đặt ${name} làm mặc định`);
+    },
+    [models, notify, setDefaultModelId],
+  );
+
   const handleDeleteModel = useCallback(
     (id: string) => {
       setModels((current) => current.filter((model) => model.id !== id));
@@ -1188,17 +1233,21 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     // Chờ đọc xong lựa chọn đã lưu, tránh ghi đè bằng mô hình đầu tiên.
     if (!modelIdReady) return;
     if (!availableModels.some((model) => model.id === modelId)) {
-      // Quản trị viên thấy khoá API: ưu tiên mô hình đã có khoá để chat được ngay.
-      const ready =
-        isAdmin &&
-        availableModels.find(
-          (model) =>
-            (providers.find((provider) => provider.id === model.providerId)
-              ?.apiKey ?? "").trim().length > 0,
-        );
-      setModelId(ready ? ready.id : availableModels[0]?.id ?? "");
+      // Ưu tiên mô hình mặc định; quản trị viên thấy khoá API thì ưu tiên mô hình có khoá.
+      const ready = isAdmin
+        ? availableModels.find(
+            (model) =>
+              (providers.find((provider) => provider.id === model.providerId)
+                ?.apiKey ?? "").trim().length > 0,
+          )
+        : undefined;
+      const preferred =
+        availableModels.find((model) => model.id === effectiveDefaultModelId) ??
+        ready ??
+        availableModels[0];
+      setModelId(preferred?.id ?? "");
     }
-  }, [availableModels, isAdmin, modelId, modelIdReady, providers, setModelId]);
+  }, [availableModels, effectiveDefaultModelId, isAdmin, modelId, modelIdReady, providers, setModelId]);
 
   useEffect(() => {
     if (activeId && !items.some((conversation) => conversation.id === activeId)) {
@@ -1279,9 +1328,11 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
     skillCount: skills.length,
     enabledSkillCount: skills.filter((skill) => skill.enabled).length,
     providerCount: providers.length,
-    user,
+    user: profile,
     canAdmin: isAdmin,
     onLogout: handleLogout,
+    onEditProfile: () => setAccountDialog("profile"),
+    onOpenSettings: () => setAccountDialog("settings"),
   };
 
   const composerNode = (
@@ -1298,6 +1349,7 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
       models={availableModels}
       providers={enabledProviders}
       modelId={modelId}
+      defaultModelId={effectiveDefaultModelId}
       onModelChange={setModelId}
       reasoningSupported={Boolean(activeModel?.reasoning)}
       reasoningEnabled={reasoning.enabled}
@@ -1311,6 +1363,7 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
       onReasoningLevelChange={(level) =>
         setReasoning((current) => ({ ...current, level }))
       }
+      enterToSend={ui.enterToSend}
     />
   );
 
@@ -1375,7 +1428,7 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
               </div>
 
               {!atBottom ? (
-                <div className="pointer-events-none absolute inset-x-0 bottom-28 z-10 flex justify-center pb-2">
+                <div className="pointer-events-none absolute inset-x-0 bottom-32 z-10 flex justify-center pb-2">
                   <button
                     type="button"
                     aria-label="Xuống cuối cuộc trò chuyện"
@@ -1422,6 +1475,8 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
             onSaveModel={handleSaveModel}
             onModelContext={handleModelContext}
             onDeleteModel={handleDeleteModel}
+            defaultModelId={effectiveDefaultModelId}
+            onSetDefaultModel={handleSetDefaultModel}
             onOpenSkills={openSkills}
             onBack={() => setView("chat")}
             onOpenSidebar={() => setMobileOpen(true)}
@@ -1461,6 +1516,18 @@ export default function ChatApp({ initialView = "chat", user }: ChatAppProps) {
           />
         </div>
       </div>
+
+      {accountDialog ? (
+        <SettingsDialog
+          initialTab={accountDialog === "profile" ? "profile" : "appearance"}
+          user={profile}
+          onSaved={setProfile}
+          ui={ui}
+          onChangeUi={(patch) => setUi((current) => ({ ...current, ...patch }))}
+          onClose={() => setAccountDialog(null)}
+          onNotify={notify}
+        />
+      ) : null}
 
       {toast ? (
         <div

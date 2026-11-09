@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { userFromBearer } from "@/lib/api-keys";
 import { prisma } from "@/lib/prisma";
 import type { AiSettings } from "@/lib/types";
 import { detectSearchIntent } from "@/lib/search-intent";
@@ -14,6 +15,7 @@ export const dynamic = "force-dynamic";
 
 const UPSTREAM_IDLE_TIMEOUT_MS = 300_000;
 const STREAM_HEARTBEAT_MS = 15_000;
+const MAX_CONTINUATIONS = 4;
 
 type ChatRole = "user" | "assistant";
 type ProviderKind = "openai" | "anthropic" | "google";
@@ -333,6 +335,7 @@ interface Extracted {
   text: string[];
   reasoning: string[];
   tools: ToolDelta[];
+  finish?: string | null;
 }
 
 function extractParts(kind: ProviderKind, raw: string): Extracted {
@@ -357,6 +360,7 @@ function extractParts(kind: ProviderKind, raw: string): Extracted {
             function?: { name?: string; arguments?: string };
           }[];
         };
+        finish_reason?: string | null;
       }[];
       error?: { message?: string };
     };
@@ -375,6 +379,7 @@ function extractParts(kind: ProviderKind, raw: string): Extracted {
       text: delta?.content ? [delta.content] : [],
       reasoning,
       tools,
+      finish: data.choices?.[0]?.finish_reason ?? null,
     };
   }
 
@@ -393,11 +398,20 @@ function extractParts(kind: ProviderKind, raw: string): Extracted {
         text?: string;
         thinking?: string;
         partial_json?: string;
+        stop_reason?: string | null;
       };
       error?: { message?: string };
     };
     if (data.type === "error" && data.error?.message) {
       throw new Error(data.error.message);
+    }
+    if (data.type === "message_delta") {
+      return {
+        text: [],
+        reasoning: [],
+        tools: [],
+        finish: data.delta?.stop_reason ?? null,
+      };
     }
     if (
       data.type === "content_block_start" &&
@@ -456,6 +470,7 @@ function extractParts(kind: ProviderKind, raw: string): Extracted {
           functionCall?: { name?: string; args?: unknown };
         }[];
       };
+      finishReason?: string | null;
     }[];
     promptFeedback?: { blockReason?: string };
     error?: { message?: string };
@@ -485,6 +500,7 @@ function extractParts(kind: ProviderKind, raw: string): Extracted {
       .filter((part) => part.thought && part.text)
       .map((part) => part.text as string),
     tools,
+    finish: data.candidates?.[0]?.finishReason ?? null,
   };
 }
 
@@ -673,6 +689,34 @@ function appendToolTurn(
       },
     })),
   });
+}
+
+const LENGTH_STOP_REASONS = new Set([
+  "length",
+  "max_tokens",
+  "MAX_TOKENS",
+  "model_length",
+]);
+
+function isLengthStop(reason: string | null | undefined) {
+  return Boolean(reason && LENGTH_STOP_REASONS.has(reason));
+}
+
+const CONTINUE_INSTRUCTION =
+  "Phần trả lời trước đã bị cắt ngang do giới hạn độ dài. Hãy viết TIẾP CHÍNH XÁC từ ký tự cuối cùng của phần đã viết: không lặp lại nội dung đã có, không mở đầu hay chào lại, không thêm lời dẫn, không mở khối mã mới nếu đang viết dở một khối mã. Chỉ xuất ra phần còn lại cho tới khi hoàn tất.";
+
+function appendContinuationTurn(
+  kind: ProviderKind,
+  chain: UpstreamMessage[],
+  assistantText: string,
+) {
+  if (kind === "google") {
+    chain.push({ role: "model", parts: [{ text: assistantText }] });
+    chain.push({ role: "user", parts: [{ text: CONTINUE_INSTRUCTION }] });
+    return;
+  }
+  chain.push({ role: "assistant", content: assistantText });
+  chain.push({ role: "user", content: CONTINUE_INSTRUCTION });
 }
 
 function reasoningBudget(level?: string) {
@@ -922,10 +966,10 @@ async function fetchWithIdleTimeout(
 }
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
+  const user = (await getCurrentUser()) ?? (await userFromBearer(request));
   if (!user) {
     return NextResponse.json(
-      { error: "Bạn cần đăng nhập để trò chuyện." },
+      { error: "Bạn cần đăng nhập hoặc dùng API key dịch vụ để trò chuyện." },
       { status: 401 },
     );
   }
@@ -1243,6 +1287,8 @@ export async function POST(request: Request) {
 
         let current = upstream;
         let rounds = 0;
+        let continuations = 0;
+        let fullText = "";
 
         while (true) {
           const body = current.body;
@@ -1251,10 +1297,12 @@ export async function POST(request: Request) {
           const toolStore = new Map<number, ToolCall>();
           let answerText = "";
           let sawText = false;
+          let stopReason: string | null = null;
 
           for await (const raw of sseData(body)) {
             if (raw === "[DONE]") break;
             const parts = extractParts(kind, raw);
+            if (parts.finish) stopReason = parts.finish;
             // Nhà cung cấp trả về suy nghĩ thì hiển thị đầy đủ, kể cả khi
             // model không hỗ trợ tắt suy luận.
             for (const chunk of parts.reasoning) send({ t: "r", v: chunk });
@@ -1268,68 +1316,121 @@ export async function POST(request: Request) {
             }
           }
 
+          fullText += answerText;
           const calls = [...toolStore.values()].filter((call) => call.name);
-          if (!calls.length || !toolsEnabled) break;
-          if (rounds >= 1) break;
+          if (calls.length && toolsEnabled && rounds < 1) {
+            // Mô hình quyết định tra web: bỏ phần nháp (nếu có), báo tiến trình.
+            if (sawText) {
+              send({ t: "c" });
+              fullText = "";
+            }
+            send({ t: "p", v: "search" });
 
-          // Mô hình quyết định tra web: bỏ phần nháp (nếu có), báo tiến trình.
-          if (sawText) send({ t: "c" });
-          send({ t: "p", v: "search" });
+            rounds += 1;
+            const results = await Promise.all(calls.map(runToolCall));
+            const sources = mergeWebSources(results);
+            const errors = results
+              .map((result) => result.error)
+              .filter((value): value is string => Boolean(value));
+            send({
+              t: "s",
+              v: sources,
+              ...(sources.length === 0 && errors.length > 0
+                ? { e: errors.join(" ") }
+                : {}),
+            });
 
-          rounds += 1;
-          const results = await Promise.all(calls.map(runToolCall));
-          const sources = mergeWebSources(results);
-          const errors = results
-            .map((result) => result.error)
-            .filter((value): value is string => Boolean(value));
-          send({
-            t: "s",
-            v: sources,
-            ...(sources.length === 0 && errors.length > 0
-              ? { e: errors.join(" ") }
-              : {}),
-          });
+            appendToolTurn(kind, chain, calls, results, answerText);
 
-          appendToolTurn(kind, chain, calls, results, answerText);
+            let next: Response;
+            try {
+              // Đã tra cứu xong: bỏ tools để mô hình buộc phải viết câu trả lời.
+              const finalSystem = [
+                buildSystemPrompt(
+                  settings,
+                  skills,
+                  payload.reasoning,
+                  false,
+                ),
+                "Bạn đã tra cứu web xong. Hãy trả lời ngay dựa trên kết quả đã có; không gọi thêm công cụ.",
+              ]
+                .filter(Boolean)
+                .join("\n\n");
+              next = await callUpstream(false, finalSystem);
+              toolsEnabled = false;
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Không gọi lại được API.";
+              send({
+                t: "e",
+                v: `Không gọi lại được ${provider.name}: ${message}`,
+              });
+              return;
+            }
 
-          let next: Response;
-          try {
-            // Đã tra cứu xong: bỏ tools để mô hình buộc phải viết câu trả lời.
-            const finalSystem = [
-              buildSystemPrompt(
-                settings,
-                skills,
-                payload.reasoning,
+            if (!next.ok) {
+              const detail = await readErrorMessage(next);
+              send({
+                t: "e",
+                v: `${provider.name} báo lỗi ${next.status}: ${detail}`,
+              });
+              return;
+            }
+
+            current = next;
+            continue;
+          }
+
+          // Chạm giới hạn độ dài: gọi tiếp để viết nốt phần còn dở, nối liền
+          // vào câu trả lời hiện tại thay vì bỏ dở giữa chừng.
+          if (
+            isLengthStop(stopReason) &&
+            fullText.trim() &&
+            continuations < MAX_CONTINUATIONS
+          ) {
+            continuations += 1;
+            appendContinuationTurn(kind, chain, fullText);
+            let next: Response;
+            try {
+              next = await callUpstream(
                 false,
-              ),
-              "Bạn đã tra cứu web xong. Hãy trả lời ngay dựa trên kết quả đã có; không gọi thêm công cụ.",
-            ]
-              .filter(Boolean)
-              .join("\n\n");
-            next = await callUpstream(false, finalSystem);
+                buildSystemPrompt(
+                  settings,
+                  skills,
+                  payload.reasoning,
+                  false,
+                  webResult ?? undefined,
+                ),
+              );
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "Không gọi tiếp được API.";
+              send({
+                t: "e",
+                v: `Không gọi tiếp được ${provider.name}: ${message}`,
+              });
+              return;
+            }
+
+            if (!next.ok) {
+              const detail = await readErrorMessage(next);
+              send({
+                t: "e",
+                v: `${provider.name} báo lỗi ${next.status}: ${detail}`,
+              });
+              return;
+            }
+
             toolsEnabled = false;
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "Không gọi lại được API.";
-            send({
-              t: "e",
-              v: `Không gọi lại được ${provider.name}: ${message}`,
-            });
-            return;
+            current = next;
+            continue;
           }
 
-          if (!next.ok) {
-            const detail = await readErrorMessage(next);
-            send({
-              t: "e",
-              v: `${provider.name} báo lỗi ${next.status}: ${detail}`,
-            });
-            return;
-          }
-
-          current = next;
+          break;
         }
       } catch (error) {
         const message =

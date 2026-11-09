@@ -13,6 +13,7 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { useState, type RefObject } from "react";
@@ -41,6 +42,8 @@ interface SidebarProps {
   onDelete: (id: string) => void;
   onNotify: (message: string) => void;
   onLogout: () => void;
+  onEditProfile: () => void;
+  onOpenSettings: () => void;
   searchRef: RefObject<HTMLInputElement | null>;
   skillCount: number;
   enabledSkillCount: number;
@@ -50,6 +53,7 @@ interface SidebarProps {
     email: string;
     plan: string;
     role: "admin" | "user";
+    avatar?: string;
   };
   /** Chỉ hiện mục Quản trị cho tài khoản có quyền. */
   canAdmin: boolean;
@@ -233,6 +237,8 @@ export default function Sidebar({
   onDelete,
   onNotify,
   onLogout,
+  onEditProfile,
+  onOpenSettings,
   searchRef,
   skillCount,
   enabledSkillCount,
@@ -448,7 +454,7 @@ export default function Sidebar({
               onClick={toggle}
               className="flex h-10 w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-xl px-1 text-left outline-hidden transition-colors hover:bg-item-hover"
             >
-              <Avatar name={user.name} seed={user.email} size={32} />
+              <Avatar name={user.name} src={user.avatar} seed={user.email} size={32} />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                 {user.name}
               </span>
@@ -467,6 +473,25 @@ export default function Sidebar({
                   {user.role === "admin" ? "Quản trị viên" : "Thành viên"}
                 </span>
               </MenuLabel>
+              <MenuSeparator />
+              <MenuItem
+                icon={<UserRound className="size-4" aria-hidden />}
+                onClick={() => {
+                  close();
+                  onEditProfile();
+                }}
+              >
+                Chỉnh sửa hồ sơ
+              </MenuItem>
+              <MenuItem
+                icon={<Settings2 className="size-4" aria-hidden />}
+                onClick={() => {
+                  close();
+                  onOpenSettings();
+                }}
+              >
+                Cài đặt
+              </MenuItem>
               <MenuSeparator />
               <MenuItem
                 icon={<Copy className="size-4" aria-hidden />}

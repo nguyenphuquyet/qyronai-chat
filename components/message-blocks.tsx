@@ -70,8 +70,8 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border-strong bg-surface">
-      <div className="flex items-center justify-between border-b border-border bg-background/70 py-1.5 pl-4 pr-2">
+    <div className="overflow-clip rounded-2xl border border-border-strong bg-surface">
+      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/90 py-1.5 pl-4 pr-2 backdrop-blur-md">
         <span className="font-mono text-xs text-muted">{lang}</span>
         <button
           type="button"

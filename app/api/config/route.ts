@@ -12,6 +12,8 @@ type ConfigPayload = {
   skills?: Skill[];
   /** Chỉ dẫn chung áp dụng cho mọi mô hình. */
   globalPrompt?: string;
+  /** Mô hình được chọn sẵn khi bắt đầu cuộc trò chuyện mới. */
+  defaultModelId?: string;
 };
 
 function toProvider(row: {
@@ -103,11 +105,12 @@ export async function GET() {
   }
 
   try {
-    const [providers, models, skills, globalSetting] = await Promise.all([
+    const [providers, models, skills, globalSetting, defaultSetting] = await Promise.all([
       prisma.provider.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
       prisma.model.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
       prisma.skill.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
       prisma.setting.findUnique({ where: { key: "globalPrompt" } }),
+      prisma.setting.findUnique({ where: { key: "defaultModelId" } }),
     ]);
 
     const canSeeKeys = user.role === "admin";
@@ -124,6 +127,7 @@ export async function GET() {
       models: models.map(toModel),
       skills: skills.map(toSkill),
       globalPrompt: globalSetting?.value ?? "",
+      defaultModelId: defaultSetting?.value ?? "",
     });
   } catch {
     // Chưa cấu hình MySQL hoặc database đang tắt: giao diện dùng bản trong máy.
@@ -134,6 +138,7 @@ export async function GET() {
       models: [],
       skills: [],
       globalPrompt: "",
+      defaultModelId: "",
     });
   }
 }
@@ -162,15 +167,28 @@ export async function PUT(request: Request) {
   const models = Array.isArray(body.models) ? body.models : [];
   const skills = Array.isArray(body.skills) ? body.skills : [];
   const hasGlobalPrompt = typeof body.globalPrompt === "string";
+  const hasDefaultModel = typeof body.defaultModelId === "string";
   const hasCollections =
     providers.length > 0 || models.length > 0 || skills.length > 0;
 
-  if (!hasCollections && !hasGlobalPrompt) {
+  if (!hasCollections && !hasGlobalPrompt && !hasDefaultModel) {
     return NextResponse.json({ ok: false, error: "Không có dữ liệu để lưu." }, { status: 400 });
   }
 
   try {
     await prisma.$transaction(async (tx) => {
+      if (hasDefaultModel) {
+        const value = (body.defaultModelId ?? "").trim();
+        if (value) {
+          await tx.setting.upsert({
+            where: { key: "defaultModelId" },
+            create: { key: "defaultModelId", value },
+            update: { value },
+          });
+        } else {
+          await tx.setting.deleteMany({ where: { key: "defaultModelId" } });
+        }
+      }
       if (hasGlobalPrompt) {
         const value = repairMojibake(body.globalPrompt?.trim() ?? "");
         if (value) {
@@ -254,8 +272,8 @@ export async function PUT(request: Request) {
             name,
             description,
             providerId: model.providerId,
-            // Ngữ cảnh chỉ do API kiểm tra mô hình ghi vào, không nhận từ trình duyệt.
-            contextWindow: null,
+            // Ngữ cảnh nhận từ API kiểm tra hoặc nhập tay (kèm đơn vị) ở Quản trị.
+            contextWindow: model.contextWindow ?? null,
             badge,
             apiModel: model.apiModel ?? null,
             protocol: model.protocol ?? "openai",
@@ -269,8 +287,11 @@ export async function PUT(request: Request) {
             name,
             description,
             providerId: model.providerId,
-            // Giữ nguyên cửa sổ ngữ cảnh đã dò từ API; không ghi đè bằng dữ
-            // liệu cũ trong localStorage của trình duyệt.
+            // Chỉ ghi đè ngữ cảnh khi trình duyệt gửi giá trị (API hoặc nhập tay);
+            // thiếu thì giữ nguyên giá trị đã dò trong database.
+            ...(model.contextWindow !== undefined
+              ? { contextWindow: model.contextWindow || null }
+              : {}),
             badge,
             apiModel: model.apiModel ?? null,
             protocol: model.protocol ?? "openai",

@@ -14,10 +14,13 @@ interface ConfigSyncOptions {
   models: ModelOption[];
   /** Chỉ dẫn chung áp dụng cho mọi mô hình. */
   globalPrompt: string;
+  /** Mô hình mặc định cho cuộc trò chuyện mới. */
+  defaultModelId: string;
   setSkills: Dispatch<SetStateAction<Skill[]>>;
   setProviders: Dispatch<SetStateAction<Provider[]>>;
   setModels: Dispatch<SetStateAction<ModelOption[]>>;
   setGlobalPrompt: Dispatch<SetStateAction<string>>;
+  setDefaultModelId: Dispatch<SetStateAction<string>>;
   /** Chỉ quản trị viên mới được ghi cấu hình dùng chung lên database. */
   canManage: boolean;
 }
@@ -33,10 +36,12 @@ export function useConfigSync({
   providers,
   models,
   globalPrompt,
+  defaultModelId,
   setSkills,
   setProviders,
   setModels,
   setGlobalPrompt,
+  setDefaultModelId,
   canManage,
 }: ConfigSyncOptions) {
   const [online, setOnline] = useState<"unknown" | "yes" | "no">("unknown");
@@ -53,6 +58,7 @@ export function useConfigSync({
           models?: ModelOption[];
           skills?: Skill[];
           globalPrompt?: string;
+          defaultModelId?: string;
         }) => {
           if (cancelled) return;
           if (!data.ready) {
@@ -74,6 +80,9 @@ export function useConfigSync({
           if (typeof data.globalPrompt === "string") {
             setGlobalPrompt(data.globalPrompt);
           }
+          if (typeof data.defaultModelId === "string") {
+            setDefaultModelId(data.defaultModelId);
+          }
           setOnline("yes");
         },
       )
@@ -84,7 +93,7 @@ export function useConfigSync({
     return () => {
       cancelled = true;
     };
-  }, [setGlobalPrompt, setModels, setProviders, setSkills]);
+  }, [setDefaultModelId, setGlobalPrompt, setModels, setProviders, setSkills]);
 
   useEffect(() => {
     if (online !== "yes" || !canManage) return;
@@ -93,12 +102,12 @@ export function useConfigSync({
       fetch("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ skills, providers, models, globalPrompt }),
+        body: JSON.stringify({ skills, providers, models, globalPrompt, defaultModelId }),
       }).catch(() => {
         // Database đang tắt: localStorage vẫn giữ thay đổi.
       });
     }, 900);
 
     return () => window.clearTimeout(timer);
-  }, [canManage, globalPrompt, models, online, providers, skills]);
+  }, [canManage, defaultModelId, globalPrompt, models, online, providers, skills]);
 }

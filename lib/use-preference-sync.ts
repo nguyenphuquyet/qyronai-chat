@@ -12,15 +12,29 @@ interface ReasoningSetting {
   level: string;
 }
 
+export interface UiSetting {
+  theme: "light" | "dark" | "system";
+  fontSize: "small" | "medium" | "large";
+  enterToSend: boolean;
+}
+
+export const DEFAULT_UI: UiSetting = {
+  theme: "system",
+  fontSize: "medium",
+  enterToSend: true,
+};
+
 interface PreferenceSyncOptions {
   modelId: string;
   reasoning: ReasoningSetting;
   savedIds: string[];
   activeId: string | null;
+  ui: UiSetting;
   setModelId: Dispatch<SetStateAction<string>>;
   setReasoning: Dispatch<SetStateAction<ReasoningSetting>>;
   setSavedIds: Dispatch<SetStateAction<string[]>>;
   setActiveId: Dispatch<SetStateAction<string | null>>;
+  setUi: Dispatch<SetStateAction<UiSetting>>;
   /** Chờ localStorage đọc xong trước khi database ghi đè. */
   ready: boolean;
 }
@@ -34,10 +48,12 @@ export function usePreferenceSync({
   reasoning,
   savedIds,
   activeId,
+  ui,
   setModelId,
   setReasoning,
   setSavedIds,
   setActiveId,
+  setUi,
   ready,
 }: PreferenceSyncOptions) {
   const [online, setOnline] = useState<"unknown" | "yes" | "no">("unknown");
@@ -56,6 +72,7 @@ export function usePreferenceSync({
             reasoning?: unknown;
             saved?: unknown;
             activeConversation?: unknown;
+            ui?: unknown;
           };
         }) => {
           if (cancelled) return;
@@ -87,6 +104,23 @@ export function usePreferenceSync({
           ) {
             setActiveId(settings.activeConversation);
           }
+          if (settings.ui && typeof settings.ui === "object") {
+            const value = settings.ui as Partial<UiSetting>;
+            setUi((current) => ({
+              theme:
+                value.theme === "light" || value.theme === "dark" || value.theme === "system"
+                  ? value.theme
+                  : current.theme,
+              fontSize:
+                value.fontSize === "small" || value.fontSize === "medium" || value.fontSize === "large"
+                  ? value.fontSize
+                  : current.fontSize,
+              enterToSend:
+                typeof value.enterToSend === "boolean"
+                  ? value.enterToSend
+                  : current.enterToSend,
+            }));
+          }
 
           setOnline("yes");
         },
@@ -98,7 +132,7 @@ export function usePreferenceSync({
     return () => {
       cancelled = true;
     };
-  }, [ready, setActiveId, setModelId, setReasoning, setSavedIds]);
+  }, [ready, setActiveId, setModelId, setReasoning, setSavedIds, setUi]);
 
   useEffect(() => {
     if (online !== "yes") return;
@@ -113,6 +147,7 @@ export function usePreferenceSync({
             reasoning,
             saved: savedIds,
             activeConversation: activeId,
+            ui,
           },
         }),
       }).catch(() => {
@@ -121,5 +156,5 @@ export function usePreferenceSync({
     }, 900);
 
     return () => window.clearTimeout(timer);
-  }, [activeId, modelId, online, reasoning, savedIds]);
+  }, [activeId, modelId, online, reasoning, savedIds, ui]);
 }

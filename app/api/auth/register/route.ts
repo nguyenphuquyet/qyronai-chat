@@ -84,6 +84,7 @@ export async function POST(request: Request) {
       email: user.email,
       role: isFirstUser ? "admin" : "user",
       plan: user.plan,
+      avatar: user.avatar ?? undefined,
     };
 
     return NextResponse.json({ ok: true, user: safeUser, isFirstUser });

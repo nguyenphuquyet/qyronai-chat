@@ -11,6 +11,7 @@ const ALLOWED_KEYS = new Set([
   "reasoning",
   "saved",
   "activeConversation",
+  "ui",
 ]);
 
 export async function GET() {

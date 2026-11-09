@@ -102,6 +102,8 @@ export interface AppUser {
   email: string;
   role: UserRole;
   plan: string;
+  /** Ảnh đại diện dạng data URL; vắng thì dùng chữ cái đầu. */
+  avatar?: string;
 }
 
 export type ConversationGroup = "Hôm nay" | "Hôm qua" | "7 ngày trước";

@@ -209,7 +209,7 @@ function extractHtml(html: string) {
     .slice(0, 5000);
 }
 
-async function readPage(url: string) {
+async function readPage(url: string): Promise<{ content: string; url: string }> {
   try {
     const response = await fetch(url, {
       headers: {
@@ -221,13 +221,91 @@ async function readPage(url: string) {
       cache: "no-store",
       signal: AbortSignal.timeout(6000),
     });
-    if (!response.ok) return "";
+    if (!response.ok) return { content: "", url };
     const type = response.headers.get("content-type") ?? "";
-    if (type && !/text\/html|text\/plain/i.test(type)) return "";
-    return extractHtml(await response.text());
+    if (type && !/text\/html|text\/plain/i.test(type)) return { content: "", url };
+    return { content: extractHtml(await response.text()), url: response.url || url };
   } catch {
-    return "";
+    return { content: "", url };
   }
+}
+
+let bingCookieCache: { value: string; at: number } | null = null;
+const BING_COOKIE_TTL = 10 * 60 * 1000;
+
+/** Bing trả RSS rỗng với IP datacenter nếu thiếu cookie phiên; lấy cookie từ trang chủ trước. */
+async function bingSessionCookie(): Promise<string> {
+  if (bingCookieCache && Date.now() - bingCookieCache.at < BING_COOKIE_TTL) {
+    return bingCookieCache.value;
+  }
+  try {
+    const response = await fetch("https://www.bing.com/", {
+      headers: {
+        "user-agent": USER_AGENT,
+        "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+      },
+      redirect: "follow",
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    const raw = response.headers.getSetCookie();
+    const value = raw.map((item) => item.split(";")[0]).filter(Boolean).join("; ");
+    bingCookieCache = { value, at: Date.now() };
+    return value;
+  } catch {
+    return bingCookieCache?.value ?? "";
+  }
+}
+
+interface DDGTopic {
+  Text?: string;
+  FirstURL?: string;
+  Topics?: DDGTopic[];
+}
+
+/** Nguồn dự phòng khi Bing không trả kết quả: DuckDuckGo Instant Answer. */
+async function duckDuckGoInstant(query: string): Promise<Candidate[]> {
+  const url =
+    "https://api.duckduckgo.com/?" +
+    new URLSearchParams({
+      q: query,
+      format: "json",
+      no_html: "1",
+      skip_disambig: "1",
+    }).toString();
+  const response = await fetch(url, {
+    headers: { "user-agent": USER_AGENT, accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return [];
+  const data = (await response.json()) as {
+    Abstract?: string;
+    AbstractURL?: string;
+    Heading?: string;
+    RelatedTopics?: DDGTopic[];
+  };
+  const results: Candidate[] = [];
+  const seen = new Set<string>();
+  const push = (title: string, link: string, snippet: string) => {
+    const safe = safeUrl(link);
+    if (!title || !safe || seen.has(safe)) return;
+    seen.add(safe);
+    results.push({ title, url: safe, snippet });
+  };
+  if (data.Abstract && data.AbstractURL) {
+    push(data.Heading || query, data.AbstractURL, cleanText(data.Abstract));
+  }
+  const walk = (topics: DDGTopic[]) => {
+    for (const topic of topics) {
+      if (topic.Topics) walk(topic.Topics);
+      else if (topic.Text && topic.FirstURL) {
+        push(cleanText(topic.Text), topic.FirstURL, cleanText(topic.Text));
+      }
+    }
+  };
+  walk(data.RelatedTopics ?? []);
+  return results.slice(0, 6);
 }
 
 function tagOf(block: string, name: string) {
@@ -247,11 +325,13 @@ async function bingRss(query: string) {
       setlang: "vi",
     }).toString();
 
+  const cookie = await bingSessionCookie();
   const response = await fetch(url, {
     headers: {
       "user-agent": USER_AGENT,
       accept: "application/rss+xml,application/xml,text/xml",
       "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+      ...(cookie ? { cookie } : {}),
     },
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
@@ -283,6 +363,46 @@ async function bingRss(query: string) {
   return results;
 }
 
+/** Google News RSS chịu được IP máy chủ; dùng khi Bing chặn/trả rỗng. */
+async function googleNewsRss(query: string): Promise<Candidate[]> {
+  const url =
+    "https://news.google.com/rss/search?" +
+    new URLSearchParams({
+      q: query,
+      hl: "vi",
+      gl: "VN",
+      ceid: "VN:vi",
+    }).toString();
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": USER_AGENT,
+      accept: "application/rss+xml,application/xml,text/xml",
+      "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return [];
+  const xml = await response.text();
+  const blocks = xml.match(/<item>[\s\S]*?<\/item>/gi) ?? [];
+  const results: Candidate[] = [];
+  const seen = new Set<string>();
+  const tokens = queryTokens(query);
+  for (const block of blocks) {
+    const title = tagOf(block, "title");
+    const link = tagOf(block, "link");
+    const snippet = tagOf(block, "description");
+    const safe = safeUrl(link);
+    if (!title || !safe || seen.has(safe)) continue;
+    const item: Candidate = { title, url: safe, snippet };
+    if (!matchesQuery(item, tokens)) continue;
+    seen.add(safe);
+    results.push(item);
+    if (results.length >= 6) break;
+  }
+  return results;
+}
+
 function mergeSources(results: WebSearchResult[]) {
   const merged: WebSource[] = [];
   const seen = new Set<string>();
@@ -311,36 +431,45 @@ export async function searchWeb(query: string): Promise<WebSearchResult> {
     };
   }
 
-  let candidates: Candidate[];
+  let candidates: Candidate[] = [];
+  let searchError: string | undefined;
   try {
     candidates = await bingRss(cleaned);
   } catch (error) {
-    return {
-      query: cleaned,
-      sources: [],
-      context: "",
-      error:
-        error instanceof Error
-          ? error.message
-          : "Không kết nối được máy tìm kiếm.",
-    };
+    searchError =
+      error instanceof Error
+        ? error.message
+        : "Không kết nối được máy tìm kiếm.";
   }
-
+  if (candidates.length === 0) {
+    try {
+      candidates = await googleNewsRss(cleaned);
+    } catch {
+      // thử nguồn kế tiếp
+    }
+  }
+  if (candidates.length === 0) {
+    try {
+      candidates = await duckDuckGoInstant(cleaned);
+    } catch {
+      // Giữ lỗi gốc của Bing nếu mọi nguồn dự phòng thất bại.
+    }
+  }
   if (candidates.length === 0) {
     return {
       query: cleaned,
       sources: [],
       context: "",
-      error: "Không tìm thấy kết quả phù hợp trên web.",
+      error: searchError ?? "Không tìm thấy kết quả phù hợp trên web.",
     };
   }
 
   const top = candidates.slice(0, 4);
   const enriched = await Promise.all(
-    top.map(async (item) => ({
-      ...item,
-      content: await readPage(item.url),
-    })),
+    top.map(async (item) => {
+      const page = await readPage(item.url);
+      return { ...item, url: page.url || item.url, content: page.content };
+    }),
   );
 
   const sources = enriched.map((item) => ({

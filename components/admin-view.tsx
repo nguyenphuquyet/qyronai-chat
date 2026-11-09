@@ -17,6 +17,7 @@ import {
   ScanSearch,
   Server,
   Sparkles,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -59,6 +60,9 @@ interface AdminViewProps {
   /** Cập nhật cửa sổ ngữ cảnh đọc được từ API sau khi kiểm tra mô hình. */
   onModelContext: (id: string, contextWindow: string) => void;
   onDeleteModel: (id: string) => void;
+  /** Mô hình hiện được đặt làm mặc định. */
+  defaultModelId: string;
+  onSetDefaultModel: (id: string) => void;
   onOpenSkills: () => void;
   onBack: () => void;
   onOpenSidebar: () => void;
@@ -66,6 +70,32 @@ interface AdminViewProps {
 
 const inputClass =
   "h-10 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm text-foreground outline-hidden transition-colors placeholder:text-muted focus:border-focus focus:ring-2 focus:ring-focus";
+
+const CONTEXT_UNITS = [
+  { id: "1", label: "token", factor: 1 },
+  { id: "1000", label: "nghìn", factor: 1000 },
+  { id: "1000000", label: "triệu", factor: 1000000 },
+] as const;
+type ContextUnit = (typeof CONTEXT_UNITS)[number]["id"];
+
+function parseContext(raw?: string): { value: string; unit: ContextUnit } {
+  const digits = (raw ?? "").replace(/[^\d]/g, "");
+  const total = digits ? parseInt(digits, 10) : 0;
+  if (total >= 1_000_000 && total % 1_000_000 === 0) {
+    return { value: String(total / 1_000_000), unit: "1000000" };
+  }
+  if (total >= 1_000 && total % 1_000 === 0) {
+    return { value: String(total / 1_000), unit: "1000" };
+  }
+  return { value: total ? String(total) : "", unit: "1" };
+}
+
+function contextTotal(value: string, unit: ContextUnit): number {
+  const n = parseFloat(value.replace(",", "."));
+  if (!isFinite(n) || n <= 0) return 0;
+  const factor = CONTEXT_UNITS.find((item) => item.id === unit)?.factor ?? 1;
+  return Math.round(n * factor);
+}
 
 function maskKey(key: string) {
   const trimmed = key.trim();
@@ -304,9 +334,13 @@ function ModelDialog({
   onContext: (id: string, contextWindow: string) => void;
 }) {
   const [name, setName] = useState(model?.name ?? "");
-  const [contextWindow, setContextWindow] = useState(
-    model?.contextWindow ?? "",
+  const [context, setContext] = useState(() =>
+    parseContext(model?.contextWindow),
   );
+  const contextTokens = contextTotal(context.value, context.unit);
+  const contextWindow = contextTokens
+    ? contextTokens.toLocaleString("vi-VN")
+    : "";
   const [contextChecking, setContextChecking] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
   const [providerId, setProviderId] = useState(
@@ -363,7 +397,7 @@ function ModelDialog({
         );
         return;
       }
-      setContextWindow(data.contextWindow);
+      setContext(parseContext(data.contextWindow));
       onContext(model.id, data.contextWindow);
     } catch (error) {
       setContextError(
@@ -397,6 +431,7 @@ function ModelDialog({
             systemPrompt: modelPrompt.trim() || undefined,
             reasoning,
             enabled,
+            contextWindow: contextWindow || undefined,
           });
         }}
         className="flex min-h-0 flex-1 flex-col"
@@ -537,13 +572,47 @@ function ModelDialog({
                   Kiểm tra
                 </button>
               </div>
-              <p className="mt-0.5 text-sm text-muted">
-                {contextWindow ? `${contextWindow} token` : "Chưa kiểm tra"}
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <input
+                  inputMode="decimal"
+                  value={context.value}
+                  onChange={(event) =>
+                    setContext((current) => ({
+                      ...current,
+                      value: event.target.value,
+                    }))
+                  }
+                  placeholder="0"
+                  aria-label="Giá trị cửa sổ ngữ cảnh"
+                  className="h-8 w-full min-w-0 rounded-lg border border-border-strong bg-surface px-2 text-sm text-foreground outline-hidden transition-colors placeholder:text-muted focus:border-focus focus:ring-2 focus:ring-focus"
+                />
+                <select
+                  value={context.unit}
+                  onChange={(event) =>
+                    setContext((current) => ({
+                      ...current,
+                      unit: event.target.value as ContextUnit,
+                    }))
+                  }
+                  aria-label="Đơn vị cửa sổ ngữ cảnh"
+                  className="h-8 shrink-0 cursor-pointer rounded-lg border border-border-strong bg-surface px-1.5 text-xs font-medium text-foreground outline-hidden transition-colors focus:border-focus"
+                >
+                  {CONTEXT_UNITS.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-1 text-[11px] tabular-nums text-muted">
+                {contextTokens
+                  ? `= ${contextWindow} token`
+                  : "Nhập tay nếu API không trả về."}
               </p>
               <p className="mt-0.5 text-[11px] text-pretty text-muted">
                 {model
-                  ? "Đọc trực tiếp từ API nhà cung cấp, không nhập tay."
-                  : "Lưu mô hình trước, rồi bấm Kiểm tra để lấy ngữ cảnh."}
+                  ? "Bấm Kiểm tra để đọc từ API, hoặc nhập tay kèm đơn vị."
+                  : "Nhập tay kèm đơn vị, hoặc lưu rồi bấm Kiểm tra."}
               </p>
               {contextError ? (
                 <p className="mt-1 text-[11px] text-pretty text-red-700">
@@ -1085,6 +1154,8 @@ export default function AdminView({
   onSaveModel,
   onModelContext,
   onDeleteModel,
+  defaultModelId,
+  onSetDefaultModel,
   onOpenSkills,
   onBack,
   onOpenSidebar,
@@ -1379,7 +1450,12 @@ export default function AdminView({
                           >
                             {model.name}
                           </p>
-                          {model.badge ? (
+                          {model.id === defaultModelId ? (
+                            <span className="rounded-md bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                              Mặc định
+                            </span>
+                          ) : null}
+                          {model.badge && model.badge !== "Mặc định" ? (
                             <span className="rounded-md bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
                               {model.badge}
                             </span>
@@ -1412,6 +1488,34 @@ export default function AdminView({
                       </div>
 
                       <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          aria-label={
+                            model.id === defaultModelId
+                              ? `${model.name} đang là mặc định`
+                              : `Đặt ${model.name} làm mặc định`
+                          }
+                          title={
+                            model.id === defaultModelId
+                              ? "Đang là mặc định"
+                              : "Đặt làm mặc định"
+                          }
+                          onClick={() => onSetDefaultModel(model.id)}
+                          className={cn(
+                            "grid size-8 cursor-pointer place-items-center rounded-lg outline-hidden transition-colors",
+                            model.id === defaultModelId
+                              ? "text-primary hover:bg-primary-light"
+                              : "text-muted hover:bg-foreground/5 hover:text-foreground",
+                          )}
+                        >
+                          <Star
+                            className={cn(
+                              "size-4",
+                              model.id === defaultModelId && "fill-current",
+                            )}
+                            aria-hidden
+                          />
+                        </button>
                         <Switch
                           checked={model.enabled}
                           onChange={() => onToggleModel(model.id)}
@@ -1452,6 +1556,18 @@ export default function AdminView({
                                 }}
                               >
                                 Chỉnh sửa mô hình
+                              </MenuItem>
+                              <MenuItem
+                                icon={<Star className="size-4" aria-hidden />}
+                                disabled={model.id === defaultModelId}
+                                onClick={() => {
+                                  onSetDefaultModel(model.id);
+                                  close();
+                                }}
+                              >
+                                {model.id === defaultModelId
+                                  ? "Đang là mặc định"
+                                  : "Đặt làm mặc định"}
                               </MenuItem>
                               <MenuSeparator />
                               <DeleteMenuItem

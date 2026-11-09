@@ -78,16 +78,33 @@ model User {
   name          String         @db.VarChar(120)
   email         String         @unique @db.VarChar(200)
   passwordHash  String         @db.VarChar(255)
+  /// Ảnh đại diện dạng data URL; null thì dùng chữ cái đầu.
+  avatar        String?        @db.LongText
   /// "admin" hoặc "user".
   role          String         @default("user") @db.VarChar(20)
   plan          String         @default("Qyron") @db.VarChar(40)
   sessions      Session[]
   settings      UserSetting[]
   conversations Conversation[]
+  apiKeys       ApiKey[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
   @@index([role])
+}
+
+/// Khoá API của dịch vụ: client bên ngoài gọi /api/v1 bằng khoá này.
+/// id là SHA-256 của khoá; khoá gốc chỉ hiện một lần lúc tạo.
+model ApiKey {
+  id         String    @id @db.VarChar(64)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prefix     String    @db.VarChar(24)
+  label      String    @db.VarChar(60)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([userId])
 }
 
 /// Cấu hình riêng của từng tài khoản: mô hình đang chọn, mức suy luận,
